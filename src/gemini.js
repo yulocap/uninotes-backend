@@ -40,4 +40,41 @@ async function generar({ contents, systemInstruction }) {
   }
 }
 
-module.exports = { generar };
+module.exports = { generar, subirArchivo, generarConArchivo };
+
+/**
+ * Sube un archivo (audio largo, por ejemplo) usando la File API de Gemini,
+ * que soporta archivos mucho más grandes que mandarlos "inline" en el
+ * pedido — necesario para clases de varias horas.
+ */
+async function subirArchivo(rutaLocal, mimeType) {
+  const archivo = await ai.files.upload({ file: rutaLocal, config: { mimeType } });
+  return archivo; // tiene .uri y .mimeType
+}
+
+/**
+ * Genera contenido referenciando un archivo ya subido con subirArchivo().
+ */
+async function generarConArchivo({ archivo, prompt, systemInstruction }) {
+  const intentos = 3;
+  for (let intento = 1; intento <= intentos; intento++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: [
+          { fileData: { fileUri: archivo.uri, mimeType: archivo.mimeType } },
+          { text: prompt }
+        ],
+        ...(systemInstruction ? { config: { systemInstruction } } : {})
+      });
+      return response.text;
+    } catch (err) {
+      const esSaturado = err?.message?.includes("503") || err?.message?.includes("UNAVAILABLE");
+      if (esSaturado && intento < intentos) {
+        await new Promise((resolve) => setTimeout(resolve, 3000 * intento));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
