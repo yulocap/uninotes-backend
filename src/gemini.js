@@ -19,12 +19,25 @@ const MODEL = "gemini-3.6-flash";
  * @returns {Promise<string>} el texto de la respuesta
  */
 async function generar({ contents, systemInstruction }) {
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents,
-    ...(systemInstruction ? { config: { systemInstruction } } : {})
-  });
-  return response.text;
+  const intentos = 3;
+  for (let intento = 1; intento <= intentos; intento++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents,
+        ...(systemInstruction ? { config: { systemInstruction } } : {})
+      });
+      return response.text;
+    } catch (err) {
+      const esSaturado = err?.message?.includes("503") || err?.message?.includes("UNAVAILABLE");
+      if (esSaturado && intento < intentos) {
+        // Google está saturado momentáneamente: esperamos un poco y reintentamos.
+        await new Promise((resolve) => setTimeout(resolve, 2000 * intento));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 module.exports = { generar };
