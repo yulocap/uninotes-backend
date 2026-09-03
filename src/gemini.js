@@ -56,7 +56,7 @@ async function subirArchivo(rutaLocal, mimeType) {
  * Genera contenido referenciando un archivo ya subido con subirArchivo().
  */
 async function generarConArchivo({ archivo, prompt, systemInstruction }) {
-  const intentos = 3;
+  const intentos = 6;
   for (let intento = 1; intento <= intentos; intento++) {
     try {
       const response = await ai.models.generateContent({
@@ -71,7 +71,8 @@ async function generarConArchivo({ archivo, prompt, systemInstruction }) {
     } catch (err) {
       const esSaturado = err?.message?.includes("503") || err?.message?.includes("UNAVAILABLE");
       if (esSaturado && intento < intentos) {
-        await new Promise((resolve) => setTimeout(resolve, 3000 * intento));
+        // Espera creciente: 5s, 10s, 20s, 30s, 45s antes de reintentar.
+        await new Promise((resolve) => setTimeout(resolve, 5000 * intento));
         continue;
       }
       throw err;
