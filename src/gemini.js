@@ -12,19 +12,40 @@ if (!process.env.GEMINI_API_KEY) {
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const MODEL = "gemini-3.6-flash";
 
+const REINTENTOS_MAXIMOS = 4;
+const ESPERA_BASE_MS = 5000; // 5s, 10s, 20s (backoff exponencial)
+
 /**
  * @param {object} opciones
  * @param {any} opciones.contents - string, o array de parts (texto/inlineData)
  * @param {string} [opciones.systemInstruction]
  * @returns {Promise<string>} el texto de la respuesta
  */
-async function generar({ contents, systemInstruction }) {
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents,
-    ...(systemInstruction ? { config: { systemInstruction } } : {})
-  });
-  return response.text;
+async function generar({ contents, systemInstruction }, intento = 1) {
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents,
+      ...(systemInstruction ? { config: { systemInstruction } } : {})
+    });
+    return response.text;
+  } catch (err) {
+    // Gemini a veces devuelve 503 "high demand" en el tier gratis. No es un
+    // error nuestro: reintentamos unas cuantas veces con espera creciente
+    // antes de darnos por vencidos.
+    const modeloSaturado =
+      err?.status === 503 || /UNAVAILABLE|overloaded|high demand/i.test(err?.message || "");
+
+    if (modeloSaturado && intento < REINTENTOS_MAXIMOS) {
+      const espera = ESPERA_BASE_MS * Math.pow(2, intento - 1);
+      console.warn(
+        `Gemini saturado (intento ${intento}/${REINTENTOS_MAXIMOS}), reintentando en ${espera / 1000}s...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, espera));
+      return generar({ contents, systemInstruction }, intento + 1);
+    }
+    throw err;
+  }
 }
 
 /**
