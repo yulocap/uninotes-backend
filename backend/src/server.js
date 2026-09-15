@@ -26,10 +26,7 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => console.log(`UniNotes backend escuchando en puerto ${PORT}`));
 
-// Transcribir un audio de 90+ min (chunking + esperas entre llamadas a
-// Gemini) puede tardar varios minutos. Render permite requests de hasta
-// ~100 min en el plan gratuito, así que solo hace falta subir estos
-// límites de Node para que no corte la conexión antes de tiempo.
-server.setTimeout(30 * 60 * 1000); // 30 min de inactividad en el socket
-server.headersTimeout = 30 * 60 * 1000;
-server.requestTimeout = 0; // sin límite para recibir el audio que sube Android
+// Cada request ahora procesa UN fragmento de audio (~10 min), no la clase
+// entera, así que no hace falta un timeout tan largo como antes.
+server.setTimeout(5 * 60 * 1000); // 5 min
+server.headersTimeout = 5 * 60 * 1000;
