@@ -38,6 +38,8 @@ function dividirAudio(rutaOriginal, carpetaDestino) {
     const patronSalida = path.join(carpetaDestino, "fragmento_%03d.m4a");
     ffmpeg(rutaOriginal)
       .outputOptions([
+        "-threads 1",          // <-- NUEVO: Obliga a usar solo 1 hilo para no saturar la RAM de Render
+        "-map 0:a",            // <-- NUEVO: Agarra estrictamente el audio, ignorando basuras o metadatos pesados
         "-f segment",
         `-segment_time ${DURACION_FRAGMENTO_SEGUNDOS}`,
         "-c copy",
