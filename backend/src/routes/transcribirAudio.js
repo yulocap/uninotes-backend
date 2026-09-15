@@ -54,39 +54,45 @@ function dividirAudio(rutaOriginal, carpetaDestino) {
 
 router.post("/transcribir", upload.single("audio"), async (req, res) => {
   if (!req.file) {
+    // Si falla rápido, contestamos normal
     return res.status(400).json({ error: "Falta el archivo de audio" });
   }
+
+  // --- EL TRUCO PARA RENDER ---
+  // Avisamos que vamos a mandar un JSON y abrimos la primer llave
+  res.setHeader("Content-Type", "application/json");
+  res.write("{");
+
+  // Mandamos un "latido" (espacio en blanco) cada 30 segundos.
+  // Los espacios no rompen el JSON y engañan a Render para que no corte.
+  const latido = setInterval(() => {
+    res.write(" "); 
+  }, 30000);
+  // -----------------------------
 
   const rutaOriginal = req.file.path;
   const carpetaFragmentos = path.join(DIR_FRAGMENTOS, `${req.file.filename}-frag`);
   fs.mkdirSync(carpetaFragmentos, { recursive: true });
-
-  // Guardamos acá los "name" de los archivos que vamos subiendo a Gemini,
-  // para poder borrarlos en el finally aunque algo falle a mitad de camino.
   const archivosGeminiPendientes = new Set();
 
   try {
-    // 1) Dividir el audio grande en fragmentos de 10 minutos
+    // 1) Dividir el audio
     await dividirAudio(rutaOriginal, carpetaFragmentos);
 
     const nombresFragmentos = fs
       .readdirSync(carpetaFragmentos)
       .filter((nombre) => nombre.startsWith("fragmento_"))
-      .sort(); // fragmento_000, fragmento_001... quedan en orden cronológico
+      .sort(); 
 
     if (nombresFragmentos.length === 0) {
-      throw new Error("FFmpeg no generó ningún fragmento de audio");
+      throw new Error("FFmpeg no generó ningún fragmento");
     }
 
-    // 2) Transcribir cada fragmento con Gemini, uno por uno, respetando
-    //    el límite gratuito de 15 solicitudes por minuto
+    // 2) Transcribir cada fragmento respetando el límite
     const textosFragmentos = [];
 
     for (let i = 0; i < nombresFragmentos.length; i++) {
       const rutaFragmento = path.join(carpetaFragmentos, nombresFragmentos[i]);
-
-      // Subimos el fragmento con la File API (evita el límite de tamaño
-      // del envío "inline" en base64, útil para fragmentos largos)
       const archivoSubido = await subirArchivo(rutaFragmento, "audio/mp4");
       archivosGeminiPendientes.add(archivoSubido.name);
 
@@ -95,45 +101,43 @@ router.post("/transcribir", upload.single("audio"), async (req, res) => {
           { fileData: { fileUri: archivoSubido.uri, mimeType: archivoSubido.mimeType } },
           {
             text:
-              "Transcribí este audio en español, palabra por palabra, sin resumir " +
-              "ni interpretar. Es un fragmento de una clase más larga: si empieza o " +
-              "termina a mitad de una frase, transcribilo tal cual igual. Devolvé " +
-              "solo el texto transcripto."
+              "Transcribí este audio en español, palabra por palabra, sin resumir. " +
+              "Es un fragmento de una clase: si empieza o termina a mitad de una frase, " +
+              "transcribilo igual. Devolvé solo el texto transcripto."
           }
         ]
       });
 
       textosFragmentos.push(textoFragmento.trim());
 
-      // Borramos el archivo de Gemini apenas terminamos de usarlo
       await borrarArchivo(archivoSubido.name);
       archivosGeminiPendientes.delete(archivoSubido.name);
 
-      // Esperamos antes de la próxima llamada para no pasarnos del RPM
-      // gratuito (no hace falta esperar después del último fragmento)
       if (i < nombresFragmentos.length - 1) {
         await esperar(ESPERA_ENTRE_LLAMADAS_MS);
       }
     }
 
-    // 3) Concatenar los textos de todos los fragmentos en un solo texto.
-    //    El resumen/mapa conceptual/temas clave los genera por separado
-    //    /api/clase/procesar (así queda igual que hoy: Android transcribe
-    //    y después llama a "procesar" con este texto completo).
+    // 3) Juntamos todo el texto
     const textoCompleto = textosFragmentos.join("\n\n");
 
-    res.json({ texto: textoCompleto });
+    // Frenamos el latido y cerramos el JSON correctamente para Android
+    clearInterval(latido);
+    res.write(`"texto": ${JSON.stringify(textoCompleto)}}`);
+    res.end(); // Terminamos la respuesta
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "No se pudo transcribir el audio" });
+    console.error("Error en transcripción:", err);
+    clearInterval(latido);
+    // Si hay error, le mandamos el error a Android respetando el JSON
+    res.write(`"error": "No se pudo transcribir el audio"}`);
+    res.end();
   } finally {
-    // 4) Limpieza: borramos el audio original, la carpeta de fragmentos
-    //    temporales, y cualquier archivo que haya quedado subido a
-    //    Gemini si el proceso falló a mitad de camino.
+    // 4) Limpieza
     fs.unlink(rutaOriginal, () => {});
     fs.rm(carpetaFragmentos, { recursive: true, force: true }, () => {});
     for (const nombre of archivosGeminiPendientes) {
-      borrarArchivo(nombre);
+      borrarArchivo(nombre).catch(()=> {});
     }
   }
 });
