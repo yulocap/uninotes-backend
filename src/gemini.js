@@ -10,7 +10,7 @@ if (!process.env.GEMINI_API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const MODEL = "gemini-3.6-flash";
+const MODEL = "gemini-2.5-flash"; // 500 requests/día gratis (gemini-3.6-flash solo da 20/día)
 
 const REINTENTOS_MAXIMOS = 6;
 const ESPERA_BASE_MS = 5000;
